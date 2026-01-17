@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales & Stock Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+        .custom-scrollbar::-webkit-scrollbar { height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .sticky-col { position: sticky; left: 0; background: white; z-index: 5; }
+        .sticky-header { position: sticky; top: 0; z-index: 20; }
+        
+        /* Loading Overlay Transitions */
+        .overlay-enter { opacity: 0; pointer-events: none; }
+        .overlay-active { opacity: 1; pointer-events: auto; }
+        .scale-in { transform: scale(1); opacity: 1; }
+        .scale-out { transform: scale(0.5); opacity: 0; }
+    </style>
+</head>
+<body class="bg-slate-50 min-height-screen text-slate-900 relative">
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center transition-opacity duration-300 overlay-enter">
+        <div class="bg-white rounded-3xl p-8 shadow-2xl flex flex-col items-center max-w-sm w-full mx-4 relative">
+            
+            <!-- Circular Progress Container -->
+            <div class="relative w-40 h-40 mb-6">
+                <!-- Background Ring -->
+                <svg class="w-full h-full transform -rotate-90">
+                    <circle cx="80" cy="80" r="70" fill="none" stroke="#f1f5f9" stroke-width="8"></circle>
+                    <!-- Progress Ring -->
+                    <circle id="loadingCircle" cx="80" cy="80" r="70" fill="none" stroke="#4f46e5" stroke-width="8" 
+                            stroke-dasharray="440" stroke-dashoffset="440" stroke-linecap="round"
+                            class="transition-all duration-500 ease-out"></circle>
+                </svg>
+                
+                <!-- Center Content: Percentage Text -->
+                <div id="progressTextContainer" class="absolute inset-0 flex items-center justify-center flex-col transition-all duration-300 scale-in">
+                    <span id="progressPercent" class="text-3xl font-bold text-indigo-600">0%</span>
+                </div>
+
+                <!-- Center Content: Success Icon -->
+                <div id="successIcon" class="absolute inset-0 flex items-center justify-center transition-all duration-300 scale-out">
+                    <div class="bg-emerald-100 rounded-full p-3">
+                        <i data-lucide="check" class="w-12 h-12 text-emerald-600"></i>
+                    </div>
+                </div>
+
+                <!-- Center Content: Error Icon -->
+                <div id="errorIcon" class="absolute inset-0 flex items-center justify-center transition-all duration-300 scale-out">
+                    <div class="bg-red-100 rounded-full p-3">
+                        <i data-lucide="x" class="w-12 h-12 text-red-600"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Text -->
+            <div class="text-center space-y-1">
+                <h3 id="loadingTitle" class="text-xl font-bold text-slate-800">Initializing</h3>
+                <p id="loadingSubtitle" class="text-sm text-slate-500 font-medium">Please wait...</p>
+            </div>
+
+            <!-- Error Action -->
+            <button id="closeOverlayBtn" onclick="hideLoading()" class="hidden mt-6 px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition-colors">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <div class="max-w-[98%] mx-auto px-4 py-8">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold tracking-tight text-indigo-900">Sales & Stock Analyzer</h1>
+                <p class="text-slate-500 mt-1">Consolidated View: Sales Performance + Inventory Status</p>
+            </div>
+            <div class="flex items-center space-x-2 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100">
+                <span class="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
+                <span class="text-sm font-medium text-indigo-700">VastraApp v2 Integrated</span>
+            </div>
+        </header>
+
+        <!-- Configuration Card -->
+        <div class="glass-card rounded-2xl p-6 shadow-sm mb-8 relative overflow-hidden">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Start Date</label>
+                    <input type="date" id="startDate" class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">End Date</label>
+                    <input type="date" id="endDate" class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                </div>
+                <!-- Reverted to Simple Text Filter -->
+                <div class="md:col-span-1">
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Filter Designs (CSV/Newlines)</label>
+                    <textarea id="designFilter" placeholder="e.g. D-101, D-102" rows="1" class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none"></textarea>
+                </div>
+                <div class="flex items-end">
+                    <button id="fetchBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-6 rounded-lg transition-all flex items-center justify-center space-x-2 shadow-md hover:shadow-lg active:scale-95">
+                        <i data-lucide="play-circle" class="w-5 h-5"></i>
+                        <span>Start Analysis</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultsContainer" class="hidden">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center space-x-4">
+                    <h2 class="text-xl font-bold text-slate-800">Analysis Dashboard</h2>
+                    <span id="rowCount" class="bg-indigo-100 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full">0 rows</span>
+                </div>
+                <!-- Added Filtered CSV Button -->
+                <div class="flex space-x-2">
+                    <button onclick="exportToExcel(true)" class="text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-md hover:bg-emerald-100 flex items-center shadow-sm transition-colors">
+                        <i data-lucide="sheet" class="w-4 h-4 mr-1"></i> Export Filtered Excel
+                    </button>
+                    <button onclick="exportToExcel(false)" class="text-sm bg-white border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-50 flex items-center shadow-sm transition-colors">
+                        <i data-lucide="sheet" class="w-4 h-4 mr-1"></i> Export All Excel
+                    </button>
+                </div>
+            </div>
+            
+            <div class="glass-card rounded-2xl overflow-hidden shadow-sm border border-slate-200">
+                <div class="overflow-x-auto custom-scrollbar max-h-[600px] overflow-y-auto">
+                    <table class="w-full text-left border-collapse" id="mainTable">
+                        <thead class="bg-slate-50 border-b border-slate-200 sticky-header" id="tableHeader"></thead>
+                        <tbody id="analysisBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="emptyState" class="py-20 text-center">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 mb-4 text-slate-400">
+                <i data-lucide="bar-chart-2" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-lg font-semibold text-slate-700">Ready for Analysis</h3>
+            <p class="text-slate-500 max-w-xs mx-auto text-sm mt-1">Fetches Sales & Stock reports to generate a unified view.</p>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // --- Configuration ---
+        const API_HEADERS = {
+            "Content-Type": "application/json",
+            "Authorization": "c7910440-dd74-11f0-adc4-cb199d9e47a1",
+            "api-key": "va$Tra@pP",
+            "device-type": "web",
+            "udid": "50605585373614300053736"
+        };
+        const SALES_URL = "https://vastraapp.com/api/v2/packingSlip/export-packingslips";
+        const STOCK_URL = "https://vastraapp.com/api/v2/report/get-designwise-stock-overall-detail-excel";
+
+        // --- UI Elements ---
+        const fetchBtn = document.getElementById('fetchBtn');
+        const startDateInput = document.getElementById('startDate');
+        const endDateInput = document.getElementById('endDate');
+        const designFilterInput = document.getElementById('designFilter');
+        const tableHeader = document.getElementById('tableHeader');
+        const analysisBody = document.getElementById('analysisBody');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const rowCount = document.getElementById('rowCount');
+        const emptyState = document.getElementById('emptyState');
+        
+        // Loading Overlay Elements
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingCircle = document.getElementById('loadingCircle');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressTextContainer = document.getElementById('progressTextContainer');
+        const successIcon = document.getElementById('successIcon');
+        const errorIcon = document.getElementById('errorIcon');
+        const loadingTitle = document.getElementById('loadingTitle');
+        const loadingSubtitle = document.getElementById('loadingSubtitle');
+        const closeOverlayBtn = document.getElementById('closeOverlayBtn');
+
+        let allGroupedData = [];
+        let filteredData = [];
+        let monthColumns = [];
+
+        // Initialize Dates
+        startDateInput.value = "2025-12-01";
+        endDateInput.value = "2026-01-31";
+
+        // --- Progress / Overlay Logic ---
+
+        function showLoading() {
+            loadingOverlay.classList.remove('overlay-enter');
+            loadingOverlay.classList.add('overlay-active');
+            
+            // Reset UI states
+            closeOverlayBtn.classList.add('hidden');
+            successIcon.classList.replace('scale-in', 'scale-out');
+            errorIcon.classList.replace('scale-in', 'scale-out');
+            progressTextContainer.classList.replace('scale-out', 'scale-in');
+            
+            updateProgress(0, 'Starting...', 'Initializing request');
+        }
+
+        function hideLoading() {
+            loadingOverlay.classList.remove('overlay-active');
+            loadingOverlay.classList.add('overlay-enter');
+        }
+
+        function updateProgress(percent, title, subtitle) {
+            // Update Circle (Circumference ~ 440)
+            const offset = 440 - (440 * percent) / 100;
+            loadingCircle.style.strokeDashoffset = offset;
+            
+            // Update Text
+            progressPercent.innerText = `${Math.round(percent)}%`;
+            if(title) loadingTitle.innerText = title;
+            if(subtitle) loadingSubtitle.innerText = subtitle;
+        }
+
+        function showSuccess() {
+            progressTextContainer.classList.replace('scale-in', 'scale-out');
+            successIcon.classList.replace('scale-out', 'scale-in');
+            loadingTitle.innerText = "Analysis Complete!";
+            loadingSubtitle.innerText = "Generating report view...";
+            
+            setTimeout(() => {
+                hideLoading();
+                emptyState.classList.add('hidden');
+                resultsContainer.classList.remove('hidden');
+            }, 1500);
+        }
+
+        function showError(msg) {
+            progressTextContainer.classList.replace('scale-in', 'scale-out');
+            errorIcon.classList.replace('scale-out', 'scale-in');
+            loadingTitle.innerText = "Error Occurred";
+            loadingSubtitle.innerText = msg;
+            loadingSubtitle.classList.add('text-red-500');
+            closeOverlayBtn.classList.remove('hidden');
+        }
+
+        // --- Data Fetching ---
+
+        function findDownloadUrl(obj) {
+            if (!obj) return null;
+            if (typeof obj === 'string' && (obj.startsWith('http') || obj.includes('.xlsx'))) return obj;
+            const keys = ['data', 'file_url', 'url', 'file_path', 'link', 'download_url', 'filePath', 'result', 'export_url', 'fileUrl'];
+            for (let k of keys) {
+                if (obj[k] && typeof obj[k] === 'string' && (obj[k].startsWith('http') || obj[k].includes('export'))) return obj[k];
+            }
+            for (let k in obj) {
+                if (typeof obj[k] === 'object') {
+                    const found = findDownloadUrl(obj[k]);
+                    if (found) return found;
+                }
+            }
+            return null;
+        }
+
+        async function fetchExcel(url, payload) {
+            try {
+                const response = await fetch(url, { method: 'POST', headers: API_HEADERS, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const json = await response.json();
+                const fileUrl = findDownloadUrl(json);
+                
+                if (!fileUrl) return [];
+
+                const fileRes = await fetch(fileUrl);
+                const blob = await fileRes.blob();
+                const buffer = await blob.arrayBuffer();
+                
+                const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                return XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+            } catch (err) {
+                console.error(err);
+                return [];
+            }
+        }
+
+        // --- Core Analysis ---
+
+        function cleanNumber(val) {
+            if (typeof val === 'number') return val;
+            let s = String(val || '0').replace(/[^0-9.-]/g, '');
+            return parseFloat(s) || 0;
+        }
+
+        function cleanSalesDesignName(name) {
+            if (!name) return 'Unknown';
+            const parts = name.split(/:\s*-\s*/);
+            return parts.length > 1 ? parts[parts.length - 1].trim() : name.trim();
+        }
+
+        function findColumnValue(row, searchTerms, excludeTerms = []) {
+            const keys = Object.keys(row);
+            
+            // Priority 1: Exact Match
+            for (let term of searchTerms) {
+                const exact = keys.find(k => k.toLowerCase().trim() === term.toLowerCase().trim());
+                if (exact) return { val: cleanNumber(row[exact]), col: exact };
+            }
+
+            // Priority 2: Fuzzy Match
+            for (let term of searchTerms) {
+                const termClean = term.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const match = keys.find(k => {
+                    const keyClean = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const isExcluded = excludeTerms.some(ex => k.toLowerCase().includes(ex.toLowerCase()));
+                    return !isExcluded && keyClean.includes(termClean);
+                });
+                if (match) return { val: cleanNumber(row[match]), col: match };
+            }
+            return { val: 0, col: null };
+        }
+
+        function runAnalysis(salesData, stockData) {
+            const groups = {};
+            const stockMap = {}; 
+
+            updateProgress(60, 'Processing Data', 'Merging sales and inventory...');
+
+            // --- STEP 1: STOCK PROCESSING ---
+            stockData.forEach((row) => {
+                const cleanRow = {};
+                Object.keys(row).forEach(k => cleanRow[k.trim()] = row[k]);
+
+                const stockRes = findColumnValue(cleanRow, ['Current Stock', 'Total Stock', 'Qty', 'Balance'], ['Pending', 'Order']);
+                const pendingRes = findColumnValue(cleanRow, ['Pending Order', 'Pending Qty', 'Pending', 'Pend'], ['Amount', 'Value', 'Rate']);
+
+                let rawDesign = String(cleanRow['Design Name'] || cleanRow['Design'] || cleanRow['Design Number'] || 'Unknown').trim();
+                const design = cleanSalesDesignName(rawDesign);
+
+                if (!stockMap[design]) stockMap[design] = { stock: 0, pending: 0, matched: false };
+                stockMap[design].stock += stockRes.val;
+                stockMap[design].pending += pendingRes.val;
+            });
+
+            // --- STEP 2: SALES PROCESSING ---
+            const monthSet = new Set();
+            const start = new Date(startDateInput.value);
+            const end = new Date(endDateInput.value);
+
+            salesData.forEach(row => {
+                const cleanRow = {};
+                Object.keys(row).forEach(k => cleanRow[k.trim()] = row[k]);
+
+                const design = cleanSalesDesignName(String(cleanRow['Design Number'] || cleanRow['Design No'] || 'Unknown').trim());
+                const color = String(cleanRow['Color'] || 'N/A').trim();
+                const size = String(cleanRow['Size'] || 'N/A').trim();
+                const qty = cleanNumber(cleanRow['Quantity']);
+                
+                let dateInput = cleanRow['Date'];
+                let date;
+                if (dateInput instanceof Date) date = dateInput;
+                else if (typeof dateInput === 'number') date = new Date((dateInput - 25569) * 86400 * 1000);
+                else {
+                    const s = String(dateInput).trim();
+                    const parts = s.split(/[-/]/);
+                    if (parts.length === 3) {
+                         if (parts[0].length === 4) date = new Date(s);
+                         else date = new Date(parts[2], parts[1]-1, parts[0]);
+                    }
+                }
+
+                if (!date || isNaN(date.getTime()) || date < start || date > end) return;
+
+                const mKey = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+                const mLabel = date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                monthSet.add(JSON.stringify({key: mKey, label: mLabel}));
+
+                const key = `${design}|${color}|${size}`;
+                if (!groups[key]) groups[key] = { design, color, size, monthlyQty: {}, totalSales: 0 };
+                
+                groups[key].monthlyQty[mKey] = (groups[key].monthlyQty[mKey] || 0) + qty;
+                groups[key].totalSales += qty;
+            });
+
+            monthColumns = Array.from(monthSet).map(s => JSON.parse(s)).sort((a,b) => a.key.localeCompare(b.key));
+
+            // --- STEP 3: MERGING ---
+            Object.values(groups).forEach(item => {
+                const stockData = stockMap[item.design];
+                if (stockData) {
+                    item.stockQty = stockData.stock;
+                    item.pendingQty = stockData.pending;
+                    stockData.matched = true;
+                } else {
+                    item.stockQty = 0;
+                    item.pendingQty = 0;
+                }
+            });
+
+            Object.keys(stockMap).forEach(design => {
+                if (!stockMap[design].matched) {
+                    const key = `${design}|-|N/A`;
+                    groups[key] = {
+                        design, color: '-', size: '-', monthlyQty: {}, 
+                        totalSales: 0, 
+                        stockQty: stockMap[design].stock, 
+                        pendingQty: stockMap[design].pending
+                    };
+                }
+            });
+
+            const den = monthColumns.length || 1;
+            allGroupedData = Object.values(groups).map(item => {
+                item.avgSales = item.totalSales / den;
+                return item;
+            }).sort((a,b) => a.design.localeCompare(b.design, undefined, {numeric: true}));
+
+            updateProgress(90, 'Finalizing', 'Rendering table view...');
+            applyFilters();
+            
+            updateProgress(100, 'Done', 'Analysis ready');
+            setTimeout(showSuccess, 500);
+        }
+
+        // --- Interaction ---
+
+        fetchBtn.addEventListener('click', async () => {
+            showLoading();
+            
+            try {
+                const startMs = new Date(startDateInput.value).getTime();
+                const endMs = new Date(endDateInput.value).getTime();
+
+                updateProgress(20, 'Requesting Data', 'Contacting VastraApp servers...');
+
+                const [sales, stock] = await Promise.all([
+                    fetchExcel(SALES_URL, { start_date: startMs, end_date: endMs, packing_slip_id: "" }),
+                    fetchExcel(STOCK_URL, { design_id: "", start_date: String(startMs), end_date: String(endMs), organization_ids: "" })
+                ]);
+
+                updateProgress(50, 'Data Received', 'Parsing Excel files...');
+                runAnalysis(sales, stock);
+
+            } catch (err) {
+                showError(err.message);
+            }
+        });
+
+        // Simple Filter Logic (Restored)
+        function applyFilters() {
+            const val = designFilterInput.value.trim().toLowerCase();
+            if (!val) {
+                filteredData = [...allGroupedData];
+            } else {
+                const filters = val.split(/[\n,]+/).map(f => f.trim()).filter(f => f);
+                filteredData = allGroupedData.filter(item => 
+                    filters.some(f => item.design.toLowerCase().includes(f))
+                );
+            }
+            renderTable();
+            rowCount.innerText = `${filteredData.length} items`;
+        }
+
+        designFilterInput.addEventListener('input', applyFilters);
+
+        function renderTable() {
+            let h = `<tr><th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase sticky-col left-0 bg-slate-50 z-10 border-b">Design</th><th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase border-b">Color</th><th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase border-b">Size</th>`;
+            monthColumns.forEach(m => h += `<th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase text-right border-l border-b bg-slate-50/50">${m.label}</th>`);
+            h += `<th class="px-6 py-4 text-xs font-bold text-indigo-600 uppercase text-right bg-indigo-50 border-l border-b">Sales</th><th class="px-6 py-4 text-xs font-bold text-amber-600 uppercase text-right bg-amber-50 border-l border-b">Avg</th><th class="px-6 py-4 text-xs font-bold text-emerald-600 uppercase text-right bg-emerald-50 border-l border-b">Stock</th><th class="px-6 py-4 text-xs font-bold text-rose-600 uppercase text-right bg-rose-50 border-l border-b">Pending</th></tr>`;
+            
+            tableHeader.innerHTML = h;
+
+            if (filteredData.length === 0) {
+               analysisBody.innerHTML = '<tr><td colspan="100%" class="px-6 py-4 text-center text-slate-500">No records found.</td></tr>';
+               rowCount.innerText = '0 items';
+               return;
+            }
+
+            const rowsHtml = filteredData.map(item => {
+                let monthlyCells = '';
+                monthColumns.forEach(m => {
+                    const val = item.monthlyQty[m.key] || 0;
+                    monthlyCells += `<td class="px-6 py-4 text-right border-l font-medium text-slate-700">${val.toLocaleString()}</td>`;
+                });
+
+                return `<tr class="hover:bg-indigo-50/30 transition-colors group">
+                    <td class="px-6 py-4 font-bold text-slate-900 sticky-col left-0 border-r bg-white group-hover:bg-indigo-50/30 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">${item.design}</td>
+                    <td class="px-6 py-4 text-slate-600">${item.color}</td>
+                    <td class="px-6 py-4 text-slate-600">${item.size}</td>
+                    ${monthlyCells}
+                    <td class="px-6 py-4 text-right font-bold text-indigo-700 bg-indigo-50/30 border-l">${item.totalSales.toLocaleString()}</td>
+                    <td class="px-6 py-4 text-right font-bold text-amber-700 bg-amber-50/30 border-l">${item.avgSales.toFixed(1)}</td>
+                    <td class="px-6 py-4 text-right font-bold text-emerald-700 bg-emerald-50/30 border-l">${item.stockQty.toLocaleString()}</td>
+                    <td class="px-6 py-4 text-right font-bold text-rose-700 bg-rose-50/30 border-l">${item.pendingQty.toLocaleString()}</td>
+                </tr>`;
+            }).join('');
+
+            analysisBody.innerHTML = rowsHtml;
+            rowCount.innerText = `${filteredData.length} items`;
+        }
+
+        function exportToExcel(onlyFiltered = false) {
+            const dataToExport = onlyFiltered ? filteredData : allGroupedData;
+            
+            if (!dataToExport.length) return;
+
+            const excelData = dataToExport.map(item => {
+                const row = {
+                    "Design Number": item.design,
+                    "Color": item.color,
+                    "Size": item.size
+                };
+                monthColumns.forEach(m => {
+                    row[m.label] = item.monthlyQty[m.key] || 0;
+                });
+                row["Total Sales"] = item.totalSales;
+                row["Avg Sales"] = parseFloat(item.avgSales.toFixed(2));
+                row["Current Stock"] = item.stockQty;
+                row["Pending Order"] = item.pendingQty;
+                return row;
+            });
+
+            const ws = XLSX.utils.json_to_sheet(excelData);
+            const wscols = [ {wch: 20}, {wch: 15}, {wch: 10} ];
+            monthColumns.forEach(() => wscols.push({wch: 12}));
+            wscols.push({wch: 12}, {wch: 12}, {wch: 12}, {wch: 12});
+            ws['!cols'] = wscols;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Sales Analysis");
+            const filename = `analysis_${onlyFiltered ? 'filtered_' : ''}${new Date().toISOString().slice(0,10)}.xlsx`;
+            XLSX.writeFile(wb, filename);
+        }
+    </script>
+</body>
+</html>
