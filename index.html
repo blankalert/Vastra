@@ -301,8 +301,18 @@
 
         function cleanSalesDesignName(name) {
             if (!name) return 'Unknown';
-            const parts = name.split(/:\s*-\s*/);
-            return parts.length > 1 ? parts[parts.length - 1].trim() : name.trim();
+            let cleaned = name;
+            
+            // 1. Remove "Prefix : -" pattern
+            const parts = cleaned.split(/:\s*-\s*/);
+            if (parts.length > 1) {
+                cleaned = parts[parts.length - 1].trim();
+            }
+
+            // 2. Remove "DES-" prefix (case-insensitive)
+            cleaned = cleaned.replace(/^DES-/i, '').trim();
+
+            return cleaned;
         }
 
         function findColumnValue(row, searchTerms, excludeTerms = []) {
@@ -351,8 +361,13 @@
 
             // --- STEP 2: SALES PROCESSING ---
             const monthSet = new Set();
-            const start = new Date(startDateInput.value);
-            const end = new Date(endDateInput.value);
+            
+            // DATE FIX: Use local time construction to avoid UTC offsets shifting the date
+            const sParts = startDateInput.value.split('-');
+            const start = new Date(sParts[0], sParts[1]-1, sParts[2], 0, 0, 0, 0); // Start of day 00:00:00 Local
+            
+            const eParts = endDateInput.value.split('-');
+            const end = new Date(eParts[0], eParts[1]-1, eParts[2], 23, 59, 59, 999); // End of day 23:59:59 Local
 
             salesData.forEach(row => {
                 const cleanRow = {};
@@ -363,19 +378,46 @@
                 const size = String(cleanRow['Size'] || 'N/A').trim();
                 const qty = cleanNumber(cleanRow['Quantity']);
                 
+                // Enhanced Date Handling
                 let dateInput = cleanRow['Date'];
                 let date;
-                if (dateInput instanceof Date) date = dateInput;
-                else if (typeof dateInput === 'number') date = new Date((dateInput - 25569) * 86400 * 1000);
-                else {
-                    const s = String(dateInput).trim();
-                    const parts = s.split(/[-/]/);
+                
+                if (dateInput instanceof Date) {
+                    date = dateInput;
+                    // Fix: If Excel gives 2-digit year (e.g. 1925 for 2025), correct it
+                    if (date.getFullYear() < 2000 && date.getFullYear() > 1900) {
+                        date.setFullYear(date.getFullYear() + 100);
+                    }
+                } else if (typeof dateInput === 'number') {
+                    // Excel Serial Date
+                    date = new Date((dateInput - 25569) * 86400 * 1000);
+                } else {
+                    // String Parsing
+                    const s = String(dateInput || '').trim();
+                    // Split by hyphen, slash, dot, or space
+                    const parts = s.split(/[-/.\s]/);
+                    
                     if (parts.length === 3) {
-                         if (parts[0].length === 4) date = new Date(s);
-                         else date = new Date(parts[2], parts[1]-1, parts[0]);
+                         // Check for YYYY-MM-DD
+                         if (parts[0].length === 4) {
+                             date = new Date(s);
+                         } else {
+                             // Assume DD-MM-YYYY or DD-MM-YY
+                             let d = parseInt(parts[0]);
+                             let m = parseInt(parts[1]) - 1; // Month is 0-indexed
+                             let y = parseInt(parts[2]);
+                             
+                             // Fix: Handle 2-digit year
+                             if (y < 100) y += 2000;
+                             
+                             if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+                                 date = new Date(y, m, d);
+                             }
+                         }
                     }
                 }
 
+                // Skip invalid dates or dates outside range
                 if (!date || isNaN(date.getTime()) || date < start || date > end) return;
 
                 const mKey = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
